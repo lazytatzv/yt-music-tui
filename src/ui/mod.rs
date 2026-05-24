@@ -52,6 +52,7 @@ pub struct UI {
     pub view_mode: ViewMode,
     pub current_tab: Tab,
     pub focused_pane: Pane,
+    pub playback_source: PlaybackSource,
     pub is_renaming_playlist: bool,
     pub new_playlist_name: String,
     pub is_setting_alarm: bool,
@@ -60,6 +61,13 @@ pub struct UI {
     pub alarm_loop_input: bool,
     pub alarm_track: Option<Track>,
     pub alarms: Vec<Alarm>,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum PlaybackSource {
+    None,
+    Search,
+    Playlist(usize),
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -99,11 +107,12 @@ pub enum ViewMode {
     PlaylistDetail,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Serialize, Deserialize, Clone, Copy)]
 pub enum RepeatMode {
     Off,
     One,
     All,
+    Shuffle,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -153,6 +162,7 @@ impl UI {
             view_mode: ViewMode::Home,
             current_tab: Tab::Home,
             focused_pane: Pane::Main,
+            playback_source: PlaybackSource::None,
             is_renaming_playlist: false,
             new_playlist_name: String::new(),
             is_setting_alarm: false,
@@ -610,6 +620,7 @@ impl UI {
             // 1. Now Playing
             let status = if self.is_playing { "PLAYING" } else { "PAUSED" };
             let color = if self.is_playing { colors::SUCCESS } else { colors::WARNING };
+
             let info = vec![
                 Line::from(vec![
                     Span::styled(format!(" {} ", status), Style::default().fg(colors::BG).bg(color).add_modifier(Modifier::BOLD)),
@@ -620,9 +631,10 @@ impl UI {
                     Span::styled(format!("  SOURCE: {}", track.platform), Style::default().fg(colors::TEXT).add_modifier(Modifier::DIM)),
                     Span::styled(" │ ", Style::default().fg(colors::PANEL)),
                     Span::styled(match self.repeat_mode {
-                        RepeatMode::Off => "REPEAT: OFF",
-                        RepeatMode::One => "REPEAT: ONE",
-                        RepeatMode::All => "REPEAT: ALL",
+                        RepeatMode::Off => "MODE: NORMAL",
+                        RepeatMode::One => "MODE: REPEAT ONE",
+                        RepeatMode::All => "MODE: REPEAT ALL",
+                        RepeatMode::Shuffle => "MODE: SHUFFLE",
                     }, Style::default().fg(colors::ACCENT)),
                 ]),
             ];
@@ -637,18 +649,28 @@ impl UI {
 
             let bar_width = area.width as usize / 3;
             let filled_width = (progress_ratio * bar_width as f64) as usize;
-            let bar = format!("{}{}", "█".repeat(filled_width), " ".repeat(bar_width - filled_width));
+            let bar = format!("{}{}", "█".repeat(filled_width), "⎯".repeat(bar_width - filled_width));
             
             let pos_fmt = format!("{:02}:{:02}", (self.playback_pos as u64) / 60, (self.playback_pos as u64) % 60);
             let dur_fmt = format!("{:02}:{:02}", (self.playback_duration as u64) / 60, (self.playback_duration as u64) % 60);
 
+            let remaining_fmt = if self.playback_duration > 0.0 {
+                let rem = self.playback_duration - self.playback_pos;
+                format!("-{:02}:{:02}", (rem as u64) / 60, (rem as u64) % 60)
+            } else {
+                "--:--".to_string()
+            };
+
             f.render_widget(Paragraph::new(vec![
                 Line::from(vec![
                     Span::styled(format!(" {} ", pos_fmt), Style::default().fg(colors::BG).bg(colors::SECONDARY).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!(" [ {} ] ", bar), Style::default().fg(colors::SECONDARY)),
-                    Span::styled(format!(" {} ", dur_fmt), Style::default().fg(colors::TEXT).add_modifier(Modifier::DIM)),
+                    Span::styled(format!(" {} ", bar), Style::default().fg(colors::SECONDARY)),
+                    Span::styled(format!(" {} ", remaining_fmt), Style::default().fg(colors::TEXT).add_modifier(Modifier::DIM)),
                 ]),
-                Line::from(Span::styled("PROGRESS ANALYSIS", Style::default().fg(colors::TEXT).add_modifier(Modifier::DIM))),
+                Line::from(vec![
+                    Span::styled("TOTAL DURATION: ", Style::default().fg(colors::TEXT).add_modifier(Modifier::DIM)),
+                    Span::styled(dur_fmt, Style::default().fg(colors::TEXT_BRIGHT)),
+                ]),
             ]).alignment(Alignment::Center), chunks[1]);
 
             // 3. Master Volume
@@ -701,7 +723,7 @@ impl UI {
             Line::from(vec![Span::styled("   p              ", Style::default().fg(colors::SUCCESS)), Span::raw(" Pause / Resume music")]),
             Line::from(vec![Span::styled("   s              ", Style::default().fg(colors::SUCCESS)), Span::raw(" Stop playback (clear player)")]),
             Line::from(vec![Span::styled("   < / >          ", Style::default().fg(colors::SUCCESS)), Span::raw(" Seek 10s Backward / Forward")]),
-            Line::from(vec![Span::styled("   r              ", Style::default().fg(colors::SUCCESS)), Span::raw(" Toggle repeat mode (Off / One / All)")]),
+            Line::from(vec![Span::styled("   r              ", Style::default().fg(colors::SUCCESS)), Span::raw(" Cycle Mode (Normal / One / All / Shuffle)")]),
             Line::from(vec![Span::styled("   c / C          ", Style::default().fg(colors::SUCCESS)), Span::raw(" Download to cache / Delete from cache")]),
             Line::from(""),
             Line::from(vec![Span::styled(" ❯ ALARM SYSTEM ", Style::default().fg(colors::WARNING).add_modifier(Modifier::BOLD))]),

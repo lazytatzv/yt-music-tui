@@ -415,8 +415,10 @@ impl App {
                                         self.ui.playlist_state.select(Some(0));
                                     }
                                 } else {
-                                    let playlist = &self.ui.playlists[self.ui.current_playlist_idx];
+                                    let playlist_idx = self.ui.current_playlist_idx;
+                                    let playlist = &self.ui.playlists[playlist_idx];
                                     if let Some(track) = playlist.tracks.get(self.ui.playlist_state.selected().unwrap_or(0)).cloned() {
+                                        self.ui.playback_source = crate::ui::PlaybackSource::Playlist(playlist_idx);
                                         let _ = self.player.play(track.clone()).await;
                                         self.ui.current_track = Some(track.clone());
                                         self.ui.is_playing = true;
@@ -427,8 +429,7 @@ impl App {
                                         // Apply current repeat mode
                                         let mode_str = match self.ui.repeat_mode {
                                             crate::ui::RepeatMode::One => "One",
-                                            crate::ui::RepeatMode::All => "All",
-                                            crate::ui::RepeatMode::Off => "Off",
+                                            _ => "Off",
                                         };
                                         self.player.set_repeat_mode(mode_str);
 
@@ -445,7 +446,9 @@ impl App {
                                         self.ui.search_mode = crate::ui::SearchMode::Track;
                                         self.ui.search_offset = 0;
                                     } else {
+                                        self.ui.playback_source = crate::ui::PlaybackSource::Search;
                                         let _ = self.player.play(track.clone()).await;
+
                                         self.ui.current_track = Some(track.clone());
                                         self.ui.is_playing = true;
                                         self.ui.playback_pos = 0.0;
@@ -455,8 +458,7 @@ impl App {
                                         // Apply current repeat mode
                                         let mode_str = match self.ui.repeat_mode {
                                             crate::ui::RepeatMode::One => "One",
-                                            crate::ui::RepeatMode::All => "All",
-                                            crate::ui::RepeatMode::Off => "Off",
+                                            _ => "Off",
                                         };
                                         self.player.set_repeat_mode(mode_str);
 
@@ -501,12 +503,12 @@ impl App {
                     self.ui.repeat_mode = match self.ui.repeat_mode {
                         crate::ui::RepeatMode::Off => crate::ui::RepeatMode::One,
                         crate::ui::RepeatMode::One => crate::ui::RepeatMode::All,
-                        crate::ui::RepeatMode::All => crate::ui::RepeatMode::Off,
+                        crate::ui::RepeatMode::All => crate::ui::RepeatMode::Shuffle,
+                        crate::ui::RepeatMode::Shuffle => crate::ui::RepeatMode::Off,
                     };
                     let mode_str = match self.ui.repeat_mode {
                         crate::ui::RepeatMode::One => "One",
-                        crate::ui::RepeatMode::All => "All",
-                        crate::ui::RepeatMode::Off => "Off",
+                        _ => "Off",
                     };
                     self.player.set_repeat_mode(mode_str);
                 }
@@ -692,27 +694,37 @@ impl App {
     }
 
     async fn play_next(&mut self) -> Result<()> {
-        let next_track = match self.ui.view_mode {
-            crate::ui::ViewMode::Search => {
+        let next_track = match self.ui.playback_source {
+            crate::ui::PlaybackSource::Search => {
                 let total = self.ui.search_results.len();
                 if total > 0 {
-                    // Calculate next index with modulo for perfect wrap-around
-                    self.ui.selected_index = (self.ui.selected_index + 1) % total;
+                    if self.ui.repeat_mode == crate::ui::RepeatMode::Shuffle {
+                        use rand::Rng;
+                        self.ui.selected_index = rand::thread_rng().gen_range(0..total);
+                    } else {
+                        self.ui.selected_index = (self.ui.selected_index + 1) % total;
+                    }
                     self.ui.list_state.select(Some(self.ui.selected_index));
                     self.ui.search_results.get(self.ui.selected_index).cloned()
                 } else { None }
             }
-            crate::ui::ViewMode::PlaylistDetail => {
-                let playlist = &self.ui.playlists[self.ui.current_playlist_idx];
-                let total = playlist.tracks.len();
-                if total > 0 {
-                    let current = self.ui.playlist_state.selected().unwrap_or(0);
-                    let next_idx = (current + 1) % total;
-                    self.ui.playlist_state.select(Some(next_idx));
-                    playlist.tracks.get(next_idx).cloned()
+            crate::ui::PlaybackSource::Playlist(idx) => {
+                if let Some(playlist) = self.ui.playlists.get(idx) {
+                    let total = playlist.tracks.len();
+                    if total > 0 {
+                        let current = self.ui.playlist_state.selected().unwrap_or(0);
+                        let next_idx = if self.ui.repeat_mode == crate::ui::RepeatMode::Shuffle {
+                            use rand::Rng;
+                            rand::thread_rng().gen_range(0..total)
+                        } else {
+                            (current + 1) % total
+                        };
+                        self.ui.playlist_state.select(Some(next_idx));
+                        playlist.tracks.get(next_idx).cloned()
+                    } else { None }
                 } else { None }
             }
-            _ => None,
+            crate::ui::PlaybackSource::None => None,
         };
 
         if let Some(track) = next_track {
@@ -724,8 +736,7 @@ impl App {
 
             let mode_str = match self.ui.repeat_mode {
                 crate::ui::RepeatMode::One => "One",
-                crate::ui::RepeatMode::All => "All",
-                crate::ui::RepeatMode::Off => "Off",
+                _ => "Off",
             };
             self.player.set_repeat_mode(mode_str);
 
@@ -736,40 +747,39 @@ impl App {
     }
 
     async fn play_prev(&mut self) -> Result<()> {
-        let prev_track = match self.ui.view_mode {
-            crate::ui::ViewMode::Search => {
-                let current = self.ui.selected_index;
-                if current > 0 {
-                    self.ui.selected_index -= 1;
-                    self.ui.list_state.select(Some(self.ui.selected_index));
-                    self.ui.search_results.get(self.ui.selected_index).cloned()
-                } else if !self.ui.search_results.is_empty() {
-                    self.ui.selected_index = self.ui.search_results.len() - 1;
+        let prev_track = match self.ui.playback_source {
+            crate::ui::PlaybackSource::Search => {
+                let total = self.ui.search_results.len();
+                if total > 0 {
+                    self.ui.selected_index = if self.ui.selected_index == 0 { total - 1 } else { self.ui.selected_index - 1 };
                     self.ui.list_state.select(Some(self.ui.selected_index));
                     self.ui.search_results.get(self.ui.selected_index).cloned()
                 } else { None }
             }
-            crate::ui::ViewMode::PlaylistDetail => {
-                let playlist = &self.ui.playlists[self.ui.current_playlist_idx];
-                let current = self.ui.playlist_state.selected().unwrap_or(0);
-                if !playlist.tracks.is_empty() {
-                    let prev_idx = if current == 0 { playlist.tracks.len() - 1 } else { current - 1 };
-                    self.ui.playlist_state.select(Some(prev_idx));
-                    playlist.tracks.get(prev_idx).cloned()
+            crate::ui::PlaybackSource::Playlist(idx) => {
+                if let Some(playlist) = self.ui.playlists.get(idx) {
+                    let total = playlist.tracks.len();
+                    if total > 0 {
+                        let current = self.ui.playlist_state.selected().unwrap_or(0);
+                        let prev_idx = if current == 0 { total - 1 } else { current - 1 };
+                        self.ui.playlist_state.select(Some(prev_idx));
+                        playlist.tracks.get(prev_idx).cloned()
+                    } else { None }
                 } else { None }
             }
-            _ => None,
+            crate::ui::PlaybackSource::None => None,
         };
 
         if let Some(track) = prev_track {
             let _ = self.player.play(track.clone()).await;
             self.ui.current_track = Some(track.clone());
             self.ui.is_playing = true;
+            self.ui.playback_pos = 0.0;
+            self.ui.playback_duration = 0.0;
 
             let mode_str = match self.ui.repeat_mode {
                 crate::ui::RepeatMode::One => "One",
-                crate::ui::RepeatMode::All => "All",
-                crate::ui::RepeatMode::Off => "Off",
+                _ => "Off",
             };
             self.player.set_repeat_mode(mode_str);
 
