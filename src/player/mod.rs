@@ -134,7 +134,11 @@ impl Player {
         let cmd = format!("{{ \"command\": [\"loadfile\", \"{}\", \"replace\"] }}\n", source);
         self.send_command(&cmd)?;
         
-        // Brief sleep to let mpv start loading before we query its state
+        // Explicitly unpause to ensure playback starts
+        let unpause_cmd = "{ \"command\": [\"set_property\", \"pause\", false] }\n";
+        self.send_command(unpause_cmd)?;
+        
+        // Brief sleep to let mpv start loading
         tokio::time::sleep(Duration::from_millis(200)).await;
         
         Ok(())
