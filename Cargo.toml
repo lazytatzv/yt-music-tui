@@ -1,8 +1,8 @@
 [package]
-name = "music-player"
+name = "yt-tui"
 version = "0.2.0"
 edition = "2021"
-description = "MELODY: Pro kawaii Rust TUI music player with Vim keybindings"
+description = "yt-tui: A sophisticated, fashionable YouTube Music TUI player"
 authors = ["Your Name"]
 license = "MIT"
 keywords = ["music", "tui", "yt-dlp", "streaming", "kawaii"]

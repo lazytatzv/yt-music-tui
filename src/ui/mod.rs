@@ -299,7 +299,7 @@ impl UI {
     }
     fn draw_header(&mut self, f: &mut Frame, area: Rect) {
         let title = Line::from(vec![
-            Span::styled(" MELODY STUDIO ", Style::default()
+            Span::styled(" YT-TUI STUDIO ", Style::default()
                 .fg(colors::BG)
                 .bg(colors::PRIMARY)
                 .add_modifier(Modifier::BOLD)),
@@ -648,7 +648,7 @@ impl UI {
             .split(area);
 
         let title = Paragraph::new(Line::from(vec![
-            Span::styled(" ❯ MELODY MANUAL ", Style::default().fg(colors::PRIMARY).add_modifier(Modifier::BOLD)),
+            Span::styled(" ❯ YT-TUI MANUAL ", Style::default().fg(colors::PRIMARY).add_modifier(Modifier::BOLD)),
         ])).alignment(Alignment::Center);
         f.render_widget(title, chunks[0]);
 
