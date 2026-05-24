@@ -85,44 +85,56 @@ impl Player {
     }
 
     fn ensure_mpv(&mut self) -> Result<()> {
-        if self.child.is_none() || self.child.as_mut().unwrap().try_wait()?.is_some() {
-            // Remove old socket if exists
-            let _ = fs::remove_file(&self.ipc_path);
+        let is_alive = if let Some(child) = &mut self.child {
+            child.try_wait()?.is_none() && UnixStream::connect(&self.ipc_path).is_ok()
+        } else {
+            false
+        };
 
+        if !is_alive {
+            log::info!("Starting new mpv instance...");
+            self.kill(); // Ensure everything is cleaned up
+            
             let child = StdCommand::new("mpv")
                 .arg("--no-video")
                 .arg("--idle")
                 .arg(format!("--input-ipc-server={}", self.ipc_path))
-                .arg("--ytdl-format=bestaudio") // Faster loading
+                .arg("--ytdl-format=bestaudio")
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .spawn()?;
 
             self.child = Some(child);
+            
+            // Wait for socket to be ready
+            for _ in 0..20 {
+                if fs::metadata(&self.ipc_path).is_ok() && UnixStream::connect(&self.ipc_path).is_ok() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
         }
         Ok(())
     }
 
     pub async fn play(&mut self, track: Track) -> Result<()> {
+        log::info!("Playing track: {}", track.title);
         self.ensure_mpv()?;
         
-        // Wait for socket to be ready (up to 1s) without blocking the thread
-        for _ in 0..10 {
-            if fs::metadata(&self.ipc_path).is_ok() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-
-        // Use local path if cached, otherwise use URL
         let source = if self.is_cached(&track) {
-            self.get_cache_path(&track).to_string_lossy().to_string()
+            let path = self.get_cache_path(&track);
+            log::info!("Using cached file: {:?}", path);
+            path.to_string_lossy().to_string()
         } else {
+            log::info!("Streaming from URL: {}", track.url);
             track.url.clone()
         };
 
-        let cmd = format!("loadfile \"{}\" replace\n", source);
+        let cmd = format!("{{ \"command\": [\"loadfile\", \"{}\", \"replace\"] }}\n", source);
         self.send_command(&cmd)?;
+        
+        // Brief sleep to let mpv start loading before we query its state
+        tokio::time::sleep(Duration::from_millis(200)).await;
         
         Ok(())
     }
@@ -186,10 +198,8 @@ impl Player {
     }
 
     fn send_command(&self, cmd: &str) -> Result<()> {
-        if fs::metadata(&self.ipc_path).is_ok() {
-            let mut stream = UnixStream::connect(&self.ipc_path)?;
-            stream.write_all(cmd.as_bytes())?;
-        }
+        let mut stream = UnixStream::connect(&self.ipc_path)?;
+        stream.write_all(cmd.as_bytes())?;
         Ok(())
     }
 
