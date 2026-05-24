@@ -157,6 +157,11 @@ impl Player {
         let _ = self.send_command(&format!("set volume {}\n", volume));
     }
 
+    pub fn seek(&mut self, seconds: i32) {
+        let cmd = format!("{{ \"command\": [\"seek\", {}, \"relative\"] }}\n", seconds);
+        let _ = self.send_command(&cmd);
+    }
+
     pub fn set_repeat_mode(&mut self, mode: &str) {
         let val = match mode {
             "One" => "inf",
@@ -168,23 +173,23 @@ impl Player {
     pub fn get_property(&self, prop: &str) -> Result<Value> {
         if fs::metadata(&self.ipc_path).is_ok() {
             let mut stream = UnixStream::connect(&self.ipc_path)?;
-            stream.set_read_timeout(Some(Duration::from_millis(500)))?;
+            stream.set_read_timeout(Some(Duration::from_millis(150)))?; // Shorter timeout
             
             let cmd = format!("{{ \"command\": [\"get_property\", \"{}\"] }}\n", prop);
             let _ = stream.write_all(cmd.as_bytes());
             
             use std::io::{BufRead, BufReader};
-            let reader = BufReader::new(stream);
-            for line in reader.lines() {
-                if let Ok(l) = line {
-                    if let Ok(json) = serde_json::from_str::<Value>(&l) {
-                        // mpv responses contain the requested data in the "data" field
-                        if json.get("data").is_some() || json.get("error").is_some() {
-                            return Ok(json);
-                        }
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            
+            // Read until we find a response with "data" or "error"
+            for _ in 0..10 {
+                line.clear();
+                if reader.read_line(&mut line).is_err() { break; }
+                if let Ok(json) = serde_json::from_str::<Value>(&line) {
+                    if json.get("data").is_some() || json.get("error").is_some() {
+                        return Ok(json);
                     }
-                } else {
-                    break;
                 }
             }
             anyhow::bail!("No valid response from mpv")
@@ -196,7 +201,28 @@ impl Player {
     pub fn is_idle(&self) -> bool {
         match self.get_property("idle-active") {
             Ok(json) => json["data"].as_bool().unwrap_or(false),
+            Err(_) => true, // If we can't talk to mpv, assume it's idle
+        }
+    }
+
+    pub fn is_eof(&self) -> bool {
+        match self.get_property("eof-reached") {
+            Ok(json) => json["data"].as_bool().unwrap_or(false),
             Err(_) => false,
+        }
+    }
+
+    pub fn get_time_pos(&self) -> f64 {
+        match self.get_property("time-pos") {
+            Ok(json) => json["data"].as_f64().unwrap_or(0.0),
+            Err(_) => 0.0,
+        }
+    }
+
+    pub fn get_duration(&self) -> f64 {
+        match self.get_property("duration") {
+            Ok(json) => json["data"].as_f64().unwrap_or(0.0),
+            Err(_) => 0.0,
         }
     }
 

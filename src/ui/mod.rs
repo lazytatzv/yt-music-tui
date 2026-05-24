@@ -40,6 +40,8 @@ pub struct UI {
     pub play_history: Vec<Track>,
     pub repeat_mode: RepeatMode,
     pub volume: u8,
+    pub playback_pos: f64,
+    pub playback_duration: f64,
     pub list_state: ratatui::widgets::ListState,
     pub playlists: Vec<Playlist>,
     pub current_playlist_idx: usize,
@@ -139,6 +141,8 @@ impl UI {
             play_history: Vec::new(),
             repeat_mode: RepeatMode::Off,
             volume: 100,
+            playback_pos: 0.0,
+            playback_duration: 0.0,
             list_state,
             playlists: vec![Playlist { name: "My Favorites".to_string(), tracks: Vec::new() }],
             current_playlist_idx: 0,
@@ -624,11 +628,27 @@ impl UI {
             ];
             f.render_widget(Paragraph::new(info), chunks[0]);
 
-            // 2. Progress Simulation
-            let progress_bar = "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯";
+            // 2. Progress Bar
+            let progress_ratio = if self.playback_duration > 0.0 {
+                (self.playback_pos / self.playback_duration).min(1.0)
+            } else {
+                0.0
+            };
+
+            let bar_width = area.width as usize / 3;
+            let filled_width = (progress_ratio * bar_width as f64) as usize;
+            let bar = format!("{}{}", "█".repeat(filled_width), " ".repeat(bar_width - filled_width));
+            
+            let pos_fmt = format!("{:02}:{:02}", (self.playback_pos as u64) / 60, (self.playback_pos as u64) % 60);
+            let dur_fmt = format!("{:02}:{:02}", (self.playback_duration as u64) / 60, (self.playback_duration as u64) % 60);
+
             f.render_widget(Paragraph::new(vec![
-                Line::from("PROGRESS ANALYSIS"),
-                Line::from(Span::styled(progress_bar, Style::default().fg(colors::PANEL))),
+                Line::from(vec![
+                    Span::styled(format!(" {} ", pos_fmt), Style::default().fg(colors::BG).bg(colors::SECONDARY).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!(" [ {} ] ", bar), Style::default().fg(colors::SECONDARY)),
+                    Span::styled(format!(" {} ", dur_fmt), Style::default().fg(colors::TEXT).add_modifier(Modifier::DIM)),
+                ]),
+                Line::from(Span::styled("PROGRESS ANALYSIS", Style::default().fg(colors::TEXT).add_modifier(Modifier::DIM))),
             ]).alignment(Alignment::Center), chunks[1]);
 
             // 3. Master Volume
@@ -680,6 +700,7 @@ impl UI {
             Line::from(vec![Span::styled(" ❯ PLAYER ", Style::default().fg(colors::SUCCESS).add_modifier(Modifier::BOLD))]),
             Line::from(vec![Span::styled("   p              ", Style::default().fg(colors::SUCCESS)), Span::raw(" Pause / Resume music")]),
             Line::from(vec![Span::styled("   s              ", Style::default().fg(colors::SUCCESS)), Span::raw(" Stop playback (clear player)")]),
+            Line::from(vec![Span::styled("   < / >          ", Style::default().fg(colors::SUCCESS)), Span::raw(" Seek 10s Backward / Forward")]),
             Line::from(vec![Span::styled("   r              ", Style::default().fg(colors::SUCCESS)), Span::raw(" Toggle repeat mode (Off / One / All)")]),
             Line::from(vec![Span::styled("   c / C          ", Style::default().fg(colors::SUCCESS)), Span::raw(" Download to cache / Delete from cache")]),
             Line::from(""),

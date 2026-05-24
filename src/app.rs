@@ -99,13 +99,18 @@ impl App {
                     last_play_start = std::time::Instant::now(); // Reset cooldown
                 }
 
-                // Auto-progression for ALL mode (with 3-second cooldown to allow loading)
-                if self.ui.is_playing && last_play_start.elapsed() > Duration::from_secs(3) && self.player.is_idle() {
-                    if self.ui.repeat_mode == crate::ui::RepeatMode::All {
-                        let _ = self.play_next().await;
-                        last_play_start = std::time::Instant::now();
-                    } else if self.ui.repeat_mode == crate::ui::RepeatMode::Off {
-                        self.ui.is_playing = false;
+                if self.ui.is_playing {
+                    self.ui.playback_pos = self.player.get_time_pos();
+                    self.ui.playback_duration = self.player.get_duration();
+
+                    // Better EOF detection for auto-progression
+                    if last_play_start.elapsed() > Duration::from_secs(5) && (self.player.is_eof() || self.player.is_idle()) {
+                        if self.ui.repeat_mode == crate::ui::RepeatMode::All {
+                            let _ = self.play_next().await;
+                            last_play_start = std::time::Instant::now();
+                        } else if self.ui.repeat_mode == crate::ui::RepeatMode::Off {
+                            self.ui.is_playing = false;
+                        }
                     }
                 }
 
@@ -263,6 +268,14 @@ impl App {
                 if self.ui.current_tab == crate::ui::Tab::Library {
                     self.ui.view_mode = crate::ui::ViewMode::PlaylistList;
                 }
+            }
+
+            // Seek - < / >
+            KeyCode::Char('<') | KeyCode::Char(',') if !self.ui.input_focus && !self.ui.is_renaming_playlist && !self.ui.is_setting_alarm => {
+                self.player.seek(-10);
+            }
+            KeyCode::Char('>') | KeyCode::Char('.') if !self.ui.input_focus && !self.ui.is_renaming_playlist && !self.ui.is_setting_alarm => {
+                self.player.seek(10);
             }
 
             KeyCode::Char('j') | KeyCode::Down if !self.ui.input_focus && !self.ui.is_renaming_playlist && !self.ui.is_setting_alarm => {
@@ -598,6 +611,15 @@ impl App {
             KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::Char('[') if !self.ui.input_focus => {
                 if self.ui.volume > 0 { self.ui.volume = self.ui.volume.saturating_sub(5); self.player.set_volume(self.ui.volume); }
             }
+            
+            // Skipping tracks
+            KeyCode::Char('>') | KeyCode::Char('.') if !self.ui.input_focus => {
+                let _ = self.play_next().await;
+            }
+            KeyCode::Char('<') | KeyCode::Char(',') if !self.ui.input_focus => {
+                let _ = self.play_prev().await;
+            }
+
             KeyCode::Char(c) if c.is_ascii_digit() && !self.ui.input_focus => {
                 let val = c.to_digit(10).unwrap_or(0);
                 self.ui.volume = if val == 0 { 100 } else { (val * 10) as u8 };
@@ -692,6 +714,50 @@ impl App {
         };
 
         if let Some(track) = next_track {
+            let _ = self.player.play(track.clone()).await;
+            self.ui.current_track = Some(track.clone());
+            self.ui.is_playing = true;
+
+            let mode_str = match self.ui.repeat_mode {
+                crate::ui::RepeatMode::One => "One",
+                crate::ui::RepeatMode::All => "All",
+                crate::ui::RepeatMode::Off => "Off",
+            };
+            self.player.set_repeat_mode(mode_str);
+
+            self.ui.play_history.insert(0, track);
+            if self.ui.play_history.len() > 20 { self.ui.play_history.pop(); }
+        }
+        Ok(())
+    }
+
+    async fn play_prev(&mut self) -> Result<()> {
+        let prev_track = match self.ui.view_mode {
+            crate::ui::ViewMode::Search => {
+                let current = self.ui.selected_index;
+                if current > 0 {
+                    self.ui.selected_index -= 1;
+                    self.ui.list_state.select(Some(self.ui.selected_index));
+                    self.ui.search_results.get(self.ui.selected_index).cloned()
+                } else if !self.ui.search_results.is_empty() {
+                    self.ui.selected_index = self.ui.search_results.len() - 1;
+                    self.ui.list_state.select(Some(self.ui.selected_index));
+                    self.ui.search_results.get(self.ui.selected_index).cloned()
+                } else { None }
+            }
+            crate::ui::ViewMode::PlaylistDetail => {
+                let playlist = &self.ui.playlists[self.ui.current_playlist_idx];
+                let current = self.ui.playlist_state.selected().unwrap_or(0);
+                if !playlist.tracks.is_empty() {
+                    let prev_idx = if current == 0 { playlist.tracks.len() - 1 } else { current - 1 };
+                    self.ui.playlist_state.select(Some(prev_idx));
+                    playlist.tracks.get(prev_idx).cloned()
+                } else { None }
+            }
+            _ => None,
+        };
+
+        if let Some(track) = prev_track {
             let _ = self.player.play(track.clone()).await;
             self.ui.current_track = Some(track.clone());
             self.ui.is_playing = true;
