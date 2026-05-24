@@ -26,7 +26,11 @@ A sophisticated, fashionable, and high-fidelity YouTube Music TUI player for the
 
 ## 🚀 Installation
 
-### Prerequisites
+### 1. Download Binary (Recommended)
+
+Simply go to the [Releases](https://github.com/lazytatzv/yt-music-tui/releases) page and download the latest binary for your system.
+
+### 2. Manual Installation
 
 The installer will check for these, but you'll need:
 - **Rust** (Cargo)
