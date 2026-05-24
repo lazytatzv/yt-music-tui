@@ -28,17 +28,18 @@ A sophisticated, fashionable, and high-fidelity YouTube Music TUI player for the
 
 ### Prerequisites
 
+The installer will check for these, but you'll need:
 - **Rust** (Cargo)
 - **mpv**: Audio engine
 - **yt-dlp**: YouTube metadata and streaming backend
 
-### Setup
+### Quick Setup
 
 ```bash
 git clone https://github.com/lazytatzv/yt-music-tui.git
 cd yt-music-tui
-cargo build --release
-./target/release/yt-tui
+chmod +x setup.sh
+./setup.sh
 ```
 
 ## ⌨️ Keybindings
