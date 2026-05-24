@@ -7,6 +7,7 @@ use std::time::Duration;
 use std::thread;
 
 use serde::{Serialize, Deserialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Track {
@@ -164,7 +165,7 @@ impl Player {
         let _ = self.send_command(&format!("{{ \"command\": [\"set_property\", \"loop-file\", \"{}\"] }}\n", val));
     }
 
-    pub fn get_property(&self, prop: &str) -> Result<String> {
+    pub fn get_property(&self, prop: &str) -> Result<Value> {
         if fs::metadata(&self.ipc_path).is_ok() {
             let mut stream = UnixStream::connect(&self.ipc_path)?;
             stream.set_read_timeout(Some(Duration::from_millis(500)))?;
@@ -176,15 +177,17 @@ impl Player {
             let reader = BufReader::new(stream);
             for line in reader.lines() {
                 if let Ok(l) = line {
-                    // We look for the response that contains "data" field
-                    if l.contains("\"data\":") {
-                        return Ok(l);
+                    if let Ok(json) = serde_json::from_str::<Value>(&l) {
+                        // mpv responses contain the requested data in the "data" field
+                        if json.get("data").is_some() || json.get("error").is_some() {
+                            return Ok(json);
+                        }
                     }
                 } else {
                     break;
                 }
             }
-            anyhow::bail!("No data in response")
+            anyhow::bail!("No valid response from mpv")
         } else {
             anyhow::bail!("IPC not connected")
         }
@@ -192,8 +195,8 @@ impl Player {
 
     pub fn is_idle(&self) -> bool {
         match self.get_property("idle-active") {
-            Ok(resp) => resp.contains("true"),
-            Err(_) => false, // Assume not idle on error to prevent premature stopping
+            Ok(json) => json["data"].as_bool().unwrap_or(false),
+            Err(_) => false,
         }
     }
 

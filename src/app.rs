@@ -59,6 +59,8 @@ impl App {
 
     async fn event_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
         let mut last_tick = std::time::Instant::now();
+        let mut last_play_start = std::time::Instant::now() - Duration::from_secs(10);
+        
         loop {
             terminal.draw(|f| {
                 self.ui.render(f, &self.player);
@@ -66,9 +68,11 @@ impl App {
 
             // Tick logic (for alarms and auto-progression)
             if last_tick.elapsed() >= Duration::from_secs(1) {
+                let now = chrono::Local::now();
                 let mut triggered_track = None;
                 let mut should_loop = false;
-                let now = chrono::Local::now();
+
+                // Alarm Check
                 for alarm in &mut self.ui.alarms {
                     if alarm.is_active && now >= alarm.target_time {
                         triggered_track = Some(alarm.track.clone());
@@ -83,7 +87,6 @@ impl App {
                 
                 let mut changed = false;
                 if triggered_track.is_some() {
-                    // Cleanup finished alarms
                     self.ui.alarms.retain(|a| a.is_active);
                     changed = true;
                 }
@@ -92,23 +95,21 @@ impl App {
                     let _ = self.player.play(track.clone()).await;
                     self.ui.current_track = Some(track);
                     self.ui.is_playing = true;
-                    if should_loop {
-                        self.player.set_repeat_mode("One");
-                    }
+                    if should_loop { self.player.set_repeat_mode("One"); }
+                    last_play_start = std::time::Instant::now(); // Reset cooldown
                 }
 
-                // Auto-progression for ALL mode
-                if self.ui.is_playing && self.player.is_idle() {
+                // Auto-progression for ALL mode (with 3-second cooldown to allow loading)
+                if self.ui.is_playing && last_play_start.elapsed() > Duration::from_secs(3) && self.player.is_idle() {
                     if self.ui.repeat_mode == crate::ui::RepeatMode::All {
                         let _ = self.play_next().await;
+                        last_play_start = std::time::Instant::now();
                     } else if self.ui.repeat_mode == crate::ui::RepeatMode::Off {
                         self.ui.is_playing = false;
                     }
                 }
 
-                if changed {
-                    let _ = self.ui.save_library();
-                }
+                if changed { let _ = self.ui.save_library(); }
                 last_tick = std::time::Instant::now();
             }
 
@@ -119,7 +120,7 @@ impl App {
 
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
-                    if !self.handle_key_event(key).await? {
+                    if !self.handle_key_event(key, &mut last_play_start).await? {
                         break;
                     }
                 }
@@ -129,7 +130,7 @@ impl App {
         Ok(())
     }
 
-    async fn handle_key_event(&mut self, key: KeyEvent) -> Result<bool> {
+    async fn handle_key_event(&mut self, key: KeyEvent, last_play_start: &mut std::time::Instant) -> Result<bool> {
         match key.code {
             // Exit
             KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
@@ -406,6 +407,7 @@ impl App {
                                         let _ = self.player.play(track.clone()).await;
                                         self.ui.current_track = Some(track.clone());
                                         self.ui.is_playing = true;
+                                        *last_play_start = std::time::Instant::now();
                                         
                                         // Apply current repeat mode
                                         let mode_str = match self.ui.repeat_mode {
@@ -431,6 +433,7 @@ impl App {
                                         let _ = self.player.play(track.clone()).await;
                                         self.ui.current_track = Some(track.clone());
                                         self.ui.is_playing = true;
+                                        *last_play_start = std::time::Instant::now();
 
                                         // Apply current repeat mode
                                         let mode_str = match self.ui.repeat_mode {
