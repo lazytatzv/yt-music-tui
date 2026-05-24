@@ -145,30 +145,43 @@ impl Player {
     }
 
     pub fn set_repeat_mode(&mut self, mode: &str) {
-        // mode can be "inf" for repeat one, or "no" for off
-        // For "All", mpv handles it differently if we use a playlist, 
-        // but for now we'll implement One and Off.
-        match mode {
-            "One" => { let _ = self.send_command("set loop-file inf\n"); },
-            _ => { let _ = self.send_command("set loop-file no\n"); },
-        }
+        let val = match mode {
+            "One" => "inf",
+            _ => "no",
+        };
+        let _ = self.send_command(&format!("{{ \"command\": [\"set_property\", \"loop-file\", \"{}\"] }}\n", val));
     }
 
     pub fn get_property(&self, prop: &str) -> Result<String> {
         if fs::metadata(&self.ipc_path).is_ok() {
             let mut stream = UnixStream::connect(&self.ipc_path)?;
-            // Set timeout for read
-            stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+            stream.set_read_timeout(Some(Duration::from_millis(500)))?;
             
             let cmd = format!("{{ \"command\": [\"get_property\", \"{}\"] }}\n", prop);
-            stream.write_all(cmd.as_bytes())?;
+            let _ = stream.write_all(cmd.as_bytes());
             
-            let mut response = String::new();
-            use std::io::Read;
-            let _ = stream.read_to_string(&mut response);
-            Ok(response)
+            use std::io::{BufRead, BufReader};
+            let reader = BufReader::new(stream);
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    // We look for the response that contains "data" field
+                    if l.contains("\"data\":") {
+                        return Ok(l);
+                    }
+                } else {
+                    break;
+                }
+            }
+            anyhow::bail!("No data in response")
         } else {
             anyhow::bail!("IPC not connected")
+        }
+    }
+
+    pub fn is_idle(&self) -> bool {
+        match self.get_property("idle-active") {
+            Ok(resp) => resp.contains("true"),
+            Err(_) => false, // Assume not idle on error to prevent premature stopping
         }
     }
 

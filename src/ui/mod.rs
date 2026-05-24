@@ -614,6 +614,12 @@ impl UI {
                 ]),
                 Line::from(vec![
                     Span::styled(format!("  SOURCE: {}", track.platform), Style::default().fg(colors::TEXT).add_modifier(Modifier::DIM)),
+                    Span::styled(" │ ", Style::default().fg(colors::PANEL)),
+                    Span::styled(match self.repeat_mode {
+                        RepeatMode::Off => "REPEAT: OFF",
+                        RepeatMode::One => "REPEAT: ONE",
+                        RepeatMode::All => "REPEAT: ALL",
+                    }, Style::default().fg(colors::ACCENT)),
                 ]),
             ];
             f.render_widget(Paragraph::new(info), chunks[0]);
